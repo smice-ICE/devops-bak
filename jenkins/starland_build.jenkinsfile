@@ -1,0 +1,38 @@
+
+copy hw description xxx.xsa file to 'starland-build' and rename it to stl_top.xsa.
+copy firmware file xxx.elf file to 'starland-build' and rename it to firmware.elf if fw is needed in this project.
+
+
+repo kernel source code from resnics gitlab repository
+
+jtag boot image: sh systems/f1000_nvmeof/build.sh
+qspi boot image: sh systems/f1000_nvmeof/build.sh -b qspi -f //(with fw)
+qspi boot image: sh systems/f1000_nvmeof/build.sh -b qspi //(no fw)
+
+
+repo kernel source code from external local path:
+
+jtag boot image: sh systems/f1000_nvmeof/build.sh -k ext -p /home/virtio/petalinux/bsp_2021_test/starland-kernel
+qspi boot image: sh systems/f1000_nvmeof/build.sh -b qspi -k ext -p /home/virtio/petalinux/bsp_2021_test/starland-kernel
+NOTE: -p must follow your kernel-source absolute path
+
+node(192.168.10.109) {
+    git credentialsId: 'b7df1984-7e6b-4928-9b80-b77f4455e487', url: 'https://gitlab.resnics-hz.com/software/starland-build.git'
+    stage "starland-release"
+    sh '''#!/bin/bash
+    set -xe
+    source ~/.profile
+    out_path=$WORKSPACE/../jenkins-output/${JOB_NAME}-${BUILD_NUMBER}
+    mkdir -p ${out_path}
+    cd $WORKSPACE
+    if [ "${env.type}" eq "jtag" ]; then
+    	sh systems/f1000_nvmeof/build.sh
+    else
+    	if [ -d $firmware ];then
+    		sh ./systems/f1000_nvmeof/build.sh -b qspi -f
+        else
+    		sh ./systems/f1000_nvmeof/build.sh -b qspi
+    	fi
+    fi
+    '''
+}

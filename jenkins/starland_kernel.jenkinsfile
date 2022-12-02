@@ -1,0 +1,131 @@
+node {
+    stage('checkout') {
+        checkout([
+                $class: 'GitSCM',
+                branches: [[name: "origin/${env.gitlabSourceBranch}"]],
+                doGenerateSubmoduleConfigurations: false,
+                extensions: [[
+                    $class : 'PreBuildMerge',
+                    options: [
+                            fastForwardMode: 'FF',
+                            mergeRemote    : 'origin',
+                            mergeStrategy  : 'default',
+                            mergeTarget    : "${env.gitlabTargetBranch}"
+                    ]
+                ]],
+                extensions: [[
+                            $class: 'UserIdentity',
+                            email : "${env.gitlabUserEmail}",
+                            name  : "${env.gitlabUserName}"
+                ]],
+                submoduleCfg: [],
+                userRemoteConfigs: [[
+                    credentialsId: "8a682772-0e73-439f-b310-0805a9cebf34",
+                    name         : 'origin',
+                    url          : "${env.gitlabSourceRepoHttpUrl}"
+                ]]
+        ])
+        env.projectVersion = sh(script: 'git rev-parse --short HEAD ${GIT_COMMIT}', returnStdout: true).trim()
+    }
+
+
+    stage('sonar-scan') {
+        env.sonar_token="49028eb7867c104bbf71520b3b12a62417e0e8da"
+        env.sonar_host="http://192.168.10.109:9000"
+        env.project="starland-kernel"
+        withSonarQubeEnv('sonarqube') {
+            def sonar_scanner = tool "sonar-scanner"
+            sh "echo ${sonar_scanner}"
+            sh "${sonar_scanner} -X " +
+                    "-D sonar.branch.name=${gitlabBranch} " +
+                    "-D sonar.projectKey=${env.project} " +
+                    "-D sonar.projectName=${env.project} " +
+                    "-D sonar.projectVersion=${env.projectVersion} " +
+                    "-D sonar.sources=src " +
+                    "-D sonar.language=c " +
+                    "-D sonar.sourceEncoding=UTF-8 " +
+                    "-D sonar.cxx.file.suffixes=.cxx,.cpp,.cc,.c,.hxx,.hpp,.hh,.h " +
+                    "-D sonar.cxx.cppcheck.path=/usr/bin/cppcheck " +
+                    "-D sonar.host.url=${env.sonar_host} " +
+                    "-D sonar.login=${env.sonar_token}"
+        }
+    }
+
+
+    stage('quality-gate') {
+        sleep 10
+        def qg = waitForQualityGate credentialsId: 'sonarqube-admin-token'
+        env.sonar_url = "http://192.168.10.109:9000/dashboard?id=starland-kernel&branch=${gitlabSourceBranch}"
+        if (qg.status != 'OK') {
+            //updateGitlabCommitStatus name: 'quality-gate', state: 'failed'
+            addGitLabMRComment comment: "Something error are found by sonarcube. Please inspect Jenkins logs: ${BUILD_URL} \r\n<br> The sonarcube path: ${env.sonar_url}"
+            //error "There are new error found by Sonarqube, please check and update in time, failures: ${qg.status}"
+            env.checkresult = "FAIL"
+        }else {
+            //updateGitlabCommitStatus name: 'quality-gate', state: 'success'
+            addGitLabMRComment comment: "Static code analysis job passed."
+            env.checkresult = "PASS"
+        }
+
+        writeFile file: 'result.properties', text: "checkresult=${env.checkresult}"
+        writeFile file: 'sonar_url.properties', text: "sonar_url=${env.sonar_url}"
+
+        sh """
+           cp ../sonar.sh ./
+           ./sonar.sh ${env.sonar_token} ${env.project} ${gitlabSourceBranch}
+        """
+    }
+
+
+    def recivers = "xiangzhang@resnics.com, chengziji@resnics.com, fanwenping@resnics.com, liuaogui@resnics.com, dongjunpeng@resnics.com, linyukai@resnics.com, caodongwang@resnics.com, jinwenbin@resnics.com, yaoshan@resnics.com"
+    emailext subject: "【AutoTest】【CI】【Job】${JOB_NAME} - Build # ${BUILD_NUMBER} - ${env.checkresult}",
+            to: "${recivers}",
+            body: '''<!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <title>${JOB_NAME} #${BUILD_NUMBER}</title>
+            </head>
+            <body leftmargin="8" marginwidth="0" topmargin="8" marginheight="4" offset="0">
+            <table width="95%" cellpadding="0" cellspacing="0" style="font-size: 11pt; font-family: Tahoma, Arial, Helvetica, sans-serif">
+                <tr>                        This email is automatically sent by the Jenkins without any reply!<br/>
+                </tr>
+
+                <tr>
+                    <td><br/>
+                        <b><span>Build Info</span></b>
+                        <hr size="2" width="100%" align="center"/>
+                    </td>
+                </tr>
+                <tr>
+                    <td>
+                        <ul>
+                            <li>ProjectName: ${PROJECT_NAME}</li>
+                            <!-- <li>ProjectUrl: </li> -->
+                            <li>ProjectBranch: ${GIT_BRANCH}</li>
+                            <li>ProjectVersion: ${GIT_REVISION}</li>
+                            <li>BuildUrl: <a href="${BUILD_URL}">${BUILD_URL}<a/></li>
+                            <li>BuildNumber: #${BUILD_NUMBER}</li>
+                            <li>SonarResult: <b>${PROPFILE, file="result.properties", property="checkresult"}</b></li>
+                            <li>SonarqubeUrl: <a href="${PROPFILE, file=\"sonar_url.properties\", property=\"sonar_url\"}">${PROPFILE, file="sonar_url.properties", property="sonar_url"}<a/></li>
+                            <li>NewCodeIssueCount: ${PROPFILE, file="count.properties", property="new_code_smell"}</li>
+                            <li>TotalCodeIssueCount: ${PROPFILE, file="count.properties", property="total_code_smell"}</li>
+                            <li>Trigger: ${CAUSE}</li>
+                        </ul>
+                    </td>
+                </tr>
+            </table>
+            </body>
+            </html>''',
+            mimeType: "text/html",
+            attachmentsPattern: '',
+            compressLog: true,
+            attachLog: false,
+            postsendScript: '',
+            presendScript: ''
+
+    if (env.checkresult != "PASS") {
+        error "There are new error found by Sonarqube, please check and repair them in time."
+    }
+
+}

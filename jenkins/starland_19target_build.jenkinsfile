@@ -1,0 +1,111 @@
+#!/bin/bash
+set -xe
+source ~/.profile
+
+cd ${WORKSPACE}
+
+if [ -f "${WORKSPACE}/design_1_wrapper.hdf" ];then
+  unzip design_1_wrapper.hdf
+  cp -f design_1_wrapper.hdf ${WORKSPACE}/systems/f1000_nvmeof_etrnic/
+  cp -f design_1_wrapper.bit ${WORKSPACE}/systems/f1000_nvmeof_etrnic/
+else
+  echo "not found design_1_wrapper.hdf"
+  exit 1
+fi
+
+echo "#!/bin/bash" > release.sh
+echo "set -x" >> release.sh
+echo "source /opt/petalinux/settings.sh" >> release.sh
+echo "cd /home/petalinux/build/nvmeof-bsp" >> release.sh
+
+if [ "${build_type}" == "jtag" ]; then
+  echo "./systems/f1000_nvmeof_etrnic/build.sh -b jtag" >> release.sh
+else
+  echo "./systems/f1000_nvmeof_etrnic/build.sh -b qspi" >> release.sh
+fi
+chown -R 1000:1000 ${WORKSPACE}
+chmod -R 755 ${WORKSPACE}
+
+docker run --rm -v /data:/data -v ${WORKSPACE}:/home/petalinux/build/nvmeof-bsp -v ${WORKSPACE}/release.sh:/home/petalinux/build/release.sh petalinux:v2019.1 ./release.sh
+
+if [ $? != 0 ]; then
+	exit 1
+fi
+
+if [ "$build_type" == "jtag" ]; then
+	zip -j $WORKSPACE/$release_version.zip \
+    $WORKSPACE/f1000_nvmeof_target_system/images/linux/bl31.elf \
+    $WORKSPACE/f1000_nvmeof_target_system/images/linux/boot.tcl \
+    $WORKSPACE/f1000_nvmeof_target_system/images/linux/image.ub \
+    $WORKSPACE/f1000_nvmeof_target_system/images/linux/pmufw.elf \
+    $WORKSPACE/f1000_nvmeof_target_system/images/linux/psu_init.tcl \
+    $WORKSPACE/f1000_nvmeof_target_system/images/linux/system.bit \
+    $WORKSPACE/f1000_nvmeof_target_system/images/linux/u-boot.elf \
+    $WORKSPACE/f1000_nvmeof_target_system/images/linux/zynqmp_fsbl.elf
+else
+  zip -j $WORKSPACE/$release_version.zip \
+    $WORKSPACE/f1000_nvmeof_target_system/images/linux/BOOT.BIN \
+    $WORKSPACE/f1000_nvmeof_target_system/images/linux/image.ub \
+    $WORKSPACE/f1000_nvmeof_target_system/images/linux/rootfs.tar.gz
+fi
+
+
+properties([
+    parameters([
+        string(
+            name: 'branch_or_tag',
+            defaultValue: 'target-bsp_2019_no_pl_ddr',
+            description: 'build branch or tag'),
+        // pipeline不支持文件上传,需要配合上传library
+        file(
+            name: 'design_1_wrapper.hdf',
+            fileLocation: '',
+            description: 'select design_1_wrapper.hdf file to upload'),
+        string(
+            name: 'build_type',
+            defaultValue: 'qspi',
+            description: 'only support qspi'),
+        string(
+            name: 'release_version',
+            defaultValue: 'resnics_starland_v00.20150000.0000.112722_release',
+            description: 'only support qspi')
+    ])
+])
+
+node("192.168.10.109") {
+	stage('checkout') {
+        checkout([
+                $class: 'GitSCM',
+                branches: [[name: "origin/${params.branch_or_tag}"]],
+                extensions: [],
+                submoduleCfg: [],
+                userRemoteConfigs: [[
+                    credentialsId: "8a682772-0e73-439f-b310-0805a9cebf34",
+                    name         : 'origin',
+                    url          : "https://192.168.10.253/software/nvmeof-bsp.git"
+                ]]
+        ])
+    }
+
+    stage("init-build"){
+        sh '''unzip design_1_wrapper.hdf
+        cp -f design_1_wrapper.hdf ${WORKSPACE}/systems/f1000_nvmeof_etrnic/
+        cp -f design_1_wrapper.bit ${WORKSPACE}/systems/f1000_nvmeof_etrnic/
+        chown -R 1000:1000 ${WORKSPACE}
+        '''
+    }
+    docker run -it --remove
+    stage('2019.1-target-build') {
+        docker.image('petalinux:v2019.1').inside("-v /data:/data -v ${WORKSPACE}:/home/petalinux/build/nvmeof-bsp") {
+            sh '''cd nvmeof-bsp
+            ./systems/f1000_nvmeof_etrnic/build.sh -b qspi
+            zip -j ./${params.release_version}.zip \
+        	./f1000_nvmeof_target_system/images/linux/BOOT.BIN \
+        	./f1000_nvmeof_target_system/images/linux/image.ub \
+        	./f1000_nvmeof_target_system/images/linux/rootfs.tar.gz
+            '''
+        }
+    }
+
+    archiveArtifacts artifacts: '${WORKSPACE}/*.zip'
+}

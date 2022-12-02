@@ -1,0 +1,95 @@
+node {
+    stage('checkout') {
+        checkout([
+                $class                           : 'GitSCM',
+                branches                         : [[name: "origin/${gitlabSourceBranch}"]],
+                doGenerateSubmoduleConfigurations: false,
+                extensions                       : [[
+                                                            $class : 'PreBuildMerge',
+                                                            options: [
+                                                                    mergeTarget    : '${gitlabTargetBranch}',
+                                                                    fastForwardMode: 'FF',
+                                                                    mergeRemote    : 'origin',
+                                                                    mergeStrategy  : 'default'
+                                                            ]
+                                                    ]],
+                submoduleCfg                     : [],
+                userRemoteConfigs                : [[
+                                                            credentialsId: '8a682772-0e73-439f-b310-0805a9cebf34',
+                                                            url          : "${gitlabSourceRepoHttpUrl}",
+                                                            name         : 'origin'
+                                                    ]]
+        ])
+        env.projectVersion = sh(script: 'git rev-parse --short HEAD ${GIT_COMMIT}', returnStdout: true).trim()
+    }
+    stage('sonar-scan') {
+        withSonarQubeEnv('sonarqube') {
+            def sonar_scanner = tool "sonar-scanner" //depend on node env config
+            sh "${sonar_scanner} -X " +
+                    "-D sonar.branch.name=${gitlabBranch} " +
+                    "-D sonar.projectKey=nvmeof-bsp " +
+                    "-D sonar.projectName=nvmeof-bsp " +
+                    "-D sonar.projectVersion=${env.projectVersion} " +
+                    "-D sonar.sources=. " +
+                    "-D sonar.language=c " +
+                    "-D sonar.sourceEncoding=UTF-8 " +
+                    "-D sonar.cxx.file.suffixes=.cxx,.cpp,.cc,.c,.hxx,.hpp,.hh,.h " +
+                    "-D sonar.cxx.cppcheck.path=/usr/bin/cppcheck " +
+                    "-D sonar.host.url=http://192.168.10.109:9000/ " +
+                    "-D sonar.login=49028eb7867c104bbf71520b3b12a62417e0e8da"
+        }
+    }
+    stage('quality-gate') {
+        sleep 10
+        def qg = waitForQualityGate credentialsId: 'sonarqube-admin-token'
+        if (qg.status != 'OK') {
+            updateGitlabCommitStatus name: 'quality-gate', state: 'failed', gitLabConnection: "gitlab"
+        }else {
+            updateGitlabCommitStatus name: 'quality-gate', state: 'success', gitLabConnection: "gitlab"
+        }
+    }
+    def recivers = "jinwenbin@resnics.com"
+    emailext subject: "【AutoTest】【CI】【Job】${JOB_NAME} - Build # ${BUILD_NUMBER}",
+            to: "${recivers}",
+            body: '''<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>${JOB_NAME} #${BUILD_NUMBER}</title>
+</head>
+<body leftmargin="8" marginwidth="0" topmargin="8" marginheight="4" offset="0">
+<table width="95%" cellpadding="0" cellspacing="0" style="font-size: 11pt; font-family: Tahoma, Arial, Helvetica, sans-serif">
+    <tr>
+        This email is automatically sent by the Jenkins without any reply!<br/>
+    </tr>
+    <tr>
+        <td><br/>
+            <b><span style="color: #0B610B; ">Build Info</span></b>
+            <hr size="2" width="100%" align="center"/>
+        </td>
+    </tr>
+    <tr>
+        <td>
+            <ul>
+                <li>ProjectName：${PROJECT_NAME}</li>
+                <!-- <li>ProjectUrl：</li> -->
+                <li>ProjectBranch：${GIT_BRANCH}</li>
+                <li>ProjectVersion：${GIT_REVISION}</li>
+                <li>BuildUrl：<a href="${BUILD_URL}">${BUILD_URL}<a/></li>
+                <li>BuildNumber：#${BUILD_NUMBER}</li>
+                <li>BuildStatus：${BUILD_STATUS}</li>
+                <li>Trigger：${CAUSE}</li>
+                <li>SonarqubeUrl：<a href="${sonarqubeurl}">${sonarqubeurl}<a/></li>
+            </ul>
+        </td>
+    </tr>
+</table>
+</body>
+</html>''',
+            mimeType: "text/html",
+            attachmentsPattern: '',
+            compressLog: true,
+            attachLog: false,
+            postsendScript: '',
+            presendScript: ''
+}

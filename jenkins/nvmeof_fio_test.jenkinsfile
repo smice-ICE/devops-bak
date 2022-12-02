@@ -1,0 +1,18 @@
+node(env.initiator_host_ip) {
+    git credentialsId: 'b7df1984-7e6b-4928-9b80-b77f4455e487', url: 'https://192.168.10.253/jinwenbin/autotest.git'
+    stage "initiator setup"
+    sh '''#!/bin/bash
+set -x
+sed 's|pytest.g_testname.*|pytest.g_testname = "'$testname'"|g' -i $WORKSPACE/conftest.py
+sed 's|pytest.g_version.*|pytest.g_version = "'$version'"|g' -i $WORKSPACE/conftest.py
+sed 's|pytest.g_project.*|pytest.g_project = "'$project'"|g' -i $WORKSPACE/conftest.py
+export PYTHONPATH=$WORKSPACE
+cat $WORKSPACE/conftest.py
+python3 -m pip install -r $WORKSPACE/requirements.txt
+python3 -u pytest_run.py -m "$case_label"
+python3 -u utils/fio.py -export fio -testname $testname -version $version -project $project
+'''
+    archiveArtifacts allowEmptyArchive: true, artifacts: '*.xlsx', followSymlinks: false
+    cleanWs cleanWhenAborted: false, cleanWhenFailure: false, cleanWhenNotBuilt: false, cleanWhenUnstable: false, deleteDirs: true, notFailBuild: true
+}
+

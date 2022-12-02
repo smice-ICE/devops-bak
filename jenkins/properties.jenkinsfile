@@ -1,0 +1,47 @@
+properties([gitLabConnection(gitLabConnection: 'gitlab', jobCredentialId: ''),
+            parameters([
+                    listGitBranches(
+                            branchFilter: '.*',
+                            credentialsId: '8a682772-0e73-439f-b310-0805a9cebf34',
+                            defaultValue: 'master',
+                            listSize: '50',
+                            name: 'tags',
+                            quickFilterEnabled: false,
+                            remoteURL: 'https://gitlab.resnics-hz.com/software/dpdk.git',
+                            selectedValue: 'NONE',
+                            sortMode: 'NONE',
+                            tagFilter: '*',
+                            type: 'PT_BRANCH_TAG'
+                    )]
+            )
+])
+parameters {
+gitParameter
+ranch: '',
+branchFilter: '.*',
+defaultValue: 'origin/bsp',
+listSize: '0',
+name: 'branch_or_tag',
+quickFilterEnabled: false,
+selectedValue: 'NONE',
+sortMode: 'NONE',
+tagFilter: '*',
+type: 'GitParameterDefinition'
+}
+
+properties([gitLabConnection(gitLabConnection: 'gitlab', jobCredentialId: ''),
+            parameters([
+                    gitParameter(
+                            branch: '',
+                            branchFilter: '.*',
+                            defaultValue: 'origin/bsp',
+                            listSize: '0',
+                            name: 'branch_or_tag',
+                            quickFilterEnabled: false,
+                            selectedValue: 'NONE',
+                            sortMode: 'NONE',
+                            tagFilter: '*',
+                            type: 'GitParameterDefinition'
+                    )]
+            )
+])

@@ -1,0 +1,33 @@
+node(env.target_host_ip) {
+    git credentialsId: 'b7df1984-7e6b-4928-9b80-b77f4455e487', url: 'https://192.168.10.253/jinwenbin/autotest.git'
+    stage "target setup"
+    timeout(time: 10, unit: 'MINUTES') {
+        sh '''#!/bin/bash
+        set -x
+        ssh-keyscan -H 192.168.10.253 >> ~/.ssh/known_hosts
+        export PYTHONPATH=$WORKSPACE
+        python3 -m pip install -r $WORKSPACE/requirements.txt
+        python3 -u $WORKSPACE/deploy/nvmeof_setup.py --url $nvmeof_release --type Target --initiator_ip $initiator_ip --target_ip $target_ip --qs $io_queue --xsdb $target_host_xsdb
+    '''
+    }
+}
+node(env.initiator_host_ip) {
+    git credentialsId: 'b7df1984-7e6b-4928-9b80-b77f4455e487', url: 'https://192.168.10.253/jinwenbin/autotest.git'
+    stage "initiator setup"
+    timeout(time: 10, unit: 'MINUTES') {
+        sh '''#!/bin/bash
+        set -x
+        export PYTHONPATH=$WORKSPACE
+        ssh-keyscan -H 192.168.10.253 >> ~/.ssh/known_hosts
+        python3 -m pip install -r $WORKSPACE/requirements.txt
+        python3 -u $WORKSPACE/deploy/nvmeof_setup.py --url $nvmeof_release --type Initialtor --initiator_ip $initiator_ip --target_ip $target_ip --qs $io_queue --xsdb $initiator_host_xsdb
+    '''
+    }
+}
+node(env.target_host_ip) {
+    stage "reboot initiator host"
+    sh '''
+    ssh-keyscan -H $initiator_host_ip >> ~/.ssh/known_hosts          
+    sshpass -p a ssh virtio@$initiator_host_ip 'sshpass -p a sudo shutdown -r -t 5'
+    '''
+}
